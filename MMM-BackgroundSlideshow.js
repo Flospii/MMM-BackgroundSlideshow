@@ -411,7 +411,7 @@ Module.register('MMM-BackgroundSlideshow', {
   },
   displayImage (imageinfo) {
     const mwLc = imageinfo.path.toLowerCase();
-    const isVideo = mwLc.endsWith('.mp4') || mwLc.endsWith('.m4v') || mwLc.endsWith('.webm') || mwLc.endsWith('.ogv');
+    const isVideo = mwLc.endsWith('.mp4') || mwLc.endsWith('.m4v') || mwLc.endsWith('.webm') || mwLc.endsWith('.ogv') || mwLc.endsWith('.mov') || mwLc.endsWith('.mkv');
 
     if (isVideo) {
       this.playingVideo = true;
@@ -436,11 +436,13 @@ Module.register('MMM-BackgroundSlideshow', {
       mediaElement.src = imageinfo.data.path || imageinfo.data;
       mediaElement.autoplay = true;
       mediaElement.muted = true; // Most browsers require muted for autoplay
+      mediaElement.setAttribute('preload', 'auto');
+      mediaElement.setAttribute('playsinline', '');
       mediaElement.className = 'video';
       mediaElement.style.width = '100%';
       mediaElement.style.height = '100%';
       mediaElement.style.objectFit = this.config.backgroundSize; // cover or contain
-      
+
       mediaElement.onended = () => {
         if (this.timer) {
           this.updateImage();
@@ -450,7 +452,7 @@ Module.register('MMM-BackgroundSlideshow', {
       mediaElement = this.createDiv();
       const imageUrl = typeof imageinfo.data === 'string' ? imageinfo.data : imageinfo.data.path;
       mediaElement.style.backgroundImage = `url("${imageUrl}")`;
-      
+
       if (this.config.showProgressBar) {
         const oldDiv = document.querySelector('.progress-inner');
         if (oldDiv) {
@@ -477,10 +479,24 @@ Module.register('MMM-BackgroundSlideshow', {
     }
 
     if (this.imagesDiv.childNodes.length > 1) {
-      this.imagesDiv.removeChild(this.imagesDiv.childNodes[0]);
+      const oldWrapper = this.imagesDiv.childNodes[0];
+      const oldVideo = oldWrapper.querySelector('video');
+      if (oldVideo) {
+        oldVideo.pause();
+        oldVideo.src = '';
+        oldVideo.load();
+        oldVideo.remove();
+      }
+      this.imagesDiv.removeChild(oldWrapper);
     }
     if (this.imagesDiv.childNodes.length > 0) {
       this.imagesDiv.childNodes[0].style.opacity = '0';
+    }
+
+    // Disable transitions for videos to prevent lag
+    if (isVideo) {
+      contentWrapper.style.animationName = 'none';
+      contentWrapper.style.transition = 'none';
     }
 
     contentWrapper.appendChild(mediaElement);

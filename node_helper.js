@@ -360,7 +360,7 @@ module.exports = NodeHelper.create({
 
   readFile (filepath, callback) {
     const ext = filepath.split('.').pop().toLowerCase();
-    const videoExtensions = ['mp4', 'm4v', 'webm', 'ogv'];
+    const videoExtensions = ['mp4', 'm4v', 'webm', 'ogv', 'mov', 'mkv'];
 
     if (videoExtensions.includes(ext)) {
       // For videos, we return the path so the client can use it as a source
@@ -370,7 +370,12 @@ module.exports = NodeHelper.create({
       // The node_helper already sets up an express static route for the first imagePath.
       
       // If it's a video, we just pass the path. The client will handle it.
-      callback({ type: 'video', path: filepath });
+      // For videos, we return a URL to our streaming endpoint
+      // This allows the browser to use byte-range requests for better performance
+      callback({
+        type: 'video',
+        path: `/mmm-backgroundslideshow/video?path=${encodeURIComponent(filepath)}`
+      });
     } else if (this.config.resizeImages) {
       this.resizeImage(filepath, callback);
     } else {
@@ -422,10 +427,7 @@ module.exports = NodeHelper.create({
   socketNotificationReceived (notification, payload) {
     if (notification === 'BACKGROUNDSLIDESHOW_REGISTER_CONFIG') {
       const config = payload;
-      this.expressInstance.use(
-        basePath + config.imagePaths[0],
-        express.static(config.imagePaths[0], {maxAge: 3600000})
-      );
+      this.config = config;
 
       // Create set of excluded subdirectories.
       this.excludePaths = new Set(config.excludePaths);
@@ -436,9 +438,106 @@ module.exports = NodeHelper.create({
         .split(',');
       this.validImageFileExtensions = new Set(validExtensionsList);
 
+      // Register all image paths as static routes
+      config.imagePaths.forEach((imagePath) => {
+        // We use a hash or a safe version of the path to avoid collisions
+        const safePath = Buffer.from(imagePath).toString('base64url');
+        this.expressInstance.use(
+          `${basePath}${safePath}`,
+          express.static(imagePath, {maxAge: 3600000})
+        );
+      });
+
+      // Add a dedicated video streaming endpoint for better performance
+      this.expressInstance.get('/mmm-backgroundslideshow/video', (req, res) => {
+        const videoPath = req.query.path;
+        if (!videoPath) {
+          return res.status(400).send('Path is required');
+        }
+
+        try {
+          if (!FileSystemImageSlideshow.existsSync(videoPath)) {
+            Log.error(`[MMM-BackgroundSlideshow] Video file not found: ${videoPath}`);
+            return res.status(404).send('Video not found');
+          }
+
+          const stat = FileSystemImageSlideshow.statSync(videoPath);
+          const fileSize = stat.size;
+          const range = req.headers.range;
+
+          // Dynamic MIME type detection
+          const ext = videoPath.split('.').pop().toLowerCase();
+          const mimeTypes = {
+            mp4: 'video/mp4',
+            m4v: 'video/mp4',
+            webm: 'video/webm',
+            ogv: 'video/ogg',
+            mov: 'video/quicktime',
+            mkv: 'video/x-matroska',
+          };
+          const contentType = mimeTypes[ext] || 'video/mp4';
+
+          Log.info(`[MMM-BackgroundSlideshow] Streaming video: ${videoPath} (Type: ${contentType}, Size: ${fileSize} bytes)`);
+
+          if (range) {
+            const parts = range.replace(/bytes=/u, '').split('-');
+            const start = parseInt(parts[0], 10);
+            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+            Log.debug(`[MMM-BackgroundSlideshow] Range request: ${start}-${end}`);
+
+            if (start >= fileSize) {
+              res.status(416).send(`Requested range not satisfiable\n${start} >= ${fileSize}`);
+              return;
+            }
+
+            const chunksize = end - start + 1;
+            const file = FileSystemImageSlideshow.createReadStream(videoPath, {
+              start,
+              end,
+              highWaterMark: 1024 * 1024 // 1MB buffer for 4K streaming
+            });
+            const head = {
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': chunksize,
+              'Content-Type': contentType,
+              'Cache-Control': 'public, max-age=3600', // Cache for 1 hour
+            };
+
+            res.writeHead(206, head);
+            file.pipe(res);
+
+            // Handle client abort
+            req.on('close', () => {
+              file.destroy();
+            });
+          } else {
+            const head = {
+              'Content-Length': fileSize,
+              'Content-Type': contentType,
+              'Cache-Control': 'public, max-age=3600',
+            };
+            res.writeHead(200, head);
+            const file = FileSystemImageSlideshow.createReadStream(videoPath, {
+              highWaterMark: 1024 * 1024
+            });
+            file.pipe(res);
+
+            req.on('close', () => {
+              file.destroy();
+            });
+          }
+        } catch (err) {
+          Log.error('[MMM-BackgroundSlideshow] Error streaming video:', err);
+          if (!res.headersSent) {
+            res.status(500).send('Internal server error');
+          }
+        }
+      });
+
       // Get the image list in a non-blocking way since large # of images would cause
       // the MagicMirror startup banner to get stuck sometimes.
-      this.config = config;
       setTimeout(() => {
         this.gatherImageList(config, true);
         this.getNextImage();
