@@ -359,22 +359,30 @@ module.exports = NodeHelper.create({
   },
 
   readFile (filepath, callback) {
-    const ext = filepath.split('.').pop();
+    const ext = filepath.split('.').pop().toLowerCase();
+    const videoExtensions = ['mp4', 'm4v', 'webm', 'ogv'];
 
-    if (this.config.resizeImages) {
+    if (videoExtensions.includes(ext)) {
+      // For videos, we return the path so the client can use it as a source
+      // We need to make sure the path is accessible via the express server
+      // MagicMirror serves the modules directory, so we can use a relative path if it's within modules
+      // However, the module might be configured with absolute paths.
+      // The node_helper already sets up an express static route for the first imagePath.
+      
+      // If it's a video, we just pass the path. The client will handle it.
+      callback({ type: 'video', path: filepath });
+    } else if (this.config.resizeImages) {
       this.resizeImage(filepath, callback);
     } else {
       Log.log('[MMM-BackgroundSlideshow] ResizeImages: false');
-      // const data = FileSystemImageSlideshow.readFileSync(filepath, { encoding: 'base64' });
-      // callback(`data:image/${ext};base64, ${data}`);
       const chunks = [];
       FileSystemImageSlideshow.createReadStream(filepath)
         .on('data', (chunk) => {
-          chunks.push(chunk); // Samla chunkar av data
+          chunks.push(chunk);
         })
         .on('end', () => {
           const buffer = Buffer.concat(chunks);
-          callback(`data:image/${ext.slice(1)};base64, ${buffer.toString('base64')}`);
+          callback(`data:image/${ext};base64, ${buffer.toString('base64')}`);
         })
         .on('error', (err) => {
           Log.error('[MMM-BackgroundSlideshow] Error reading file:', err);

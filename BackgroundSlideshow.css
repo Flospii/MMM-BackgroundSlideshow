@@ -1,5 +1,6 @@
 .MMM-BackgroundSlideshow .images,
 .MMM-BackgroundSlideshow .image,
+.MMM-BackgroundSlideshow .video,
 .MMM-BackgroundSlideshow .transition,
 .MMM-BackgroundSlideshow .gradient {
   position: absolute;
@@ -8,7 +9,8 @@
   height: 100%;
   width: 100%;
 }
-.MMM-BackgroundSlideshow .image {
+.MMM-BackgroundSlideshow .image,
+.MMM-BackgroundSlideshow .video {
   background-repeat: no-repeat;
   animation-timing-function: linear;
   animation-direction: alternate;

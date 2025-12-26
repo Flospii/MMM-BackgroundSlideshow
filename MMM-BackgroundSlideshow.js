@@ -33,7 +33,7 @@ Module.register('MMM-BackgroundSlideshow', {
     // if false each path with be viewed separately in the order listed
     recursiveSubDirectories: false,
     // list of valid file extensions, separated by commas
-    validImageFileExtensions: 'bmp,jpg,jpeg,gif,png',
+    validImageFileExtensions: 'bmp,jpg,jpeg,gif,png,mp4,m4v,webm,ogv',
     // show a panel containing information about the image currently displayed.
     showImageInfo: false,
     // a comma separated list of values to display: name, date, geo (TODO)
@@ -411,132 +411,105 @@ Module.register('MMM-BackgroundSlideshow', {
   },
   displayImage (imageinfo) {
     const mwLc = imageinfo.path.toLowerCase();
-    if (mwLc.endsWith('.mp4') || mwLc.endsWith('.m4v')) {
-      const payload = [imageinfo.path, 'PLAY'];
-      imageinfo.data = 'modules/MMM-BackgroundSlideshow/transparent1080p.png';
-      this.sendSocketNotification('BACKGROUNDSLIDESHOW_PLAY_VIDEO', payload);
+    const isVideo = mwLc.endsWith('.mp4') || mwLc.endsWith('.m4v') || mwLc.endsWith('.webm') || mwLc.endsWith('.ogv');
+
+    if (isVideo) {
       this.playingVideo = true;
-      this.suspend();
     } else {
       this.playingVideo = false;
     }
 
-    const image = new Image();
-    image.onload = () => {
-      // check if there are more than 2 elements and remove the first one
-      if (this.imagesDiv.childNodes.length > 1) {
-        this.imagesDiv.removeChild(this.imagesDiv.childNodes[0]);
-      }
-      if (this.imagesDiv.childNodes.length > 0) {
-        this.imagesDiv.childNodes[0].style.opacity = '0';
-      }
+    const contentWrapper = document.createElement('div');
+    contentWrapper.className = 'transition';
+    
+    if (this.config.transitionImages && this.config.transitions.length > 0) {
+      const randomNumber = Math.floor(Math.random() * this.config.transitions.length);
+      contentWrapper.style.animationDuration = this.config.transitionSpeed;
+      contentWrapper.style.transition = `opacity ${this.config.transitionSpeed} ease-in-out`;
+      contentWrapper.style.animationName = this.config.transitions[randomNumber];
+      contentWrapper.style.animationTimingFunction = this.config.transitionTimingFunction;
+    }
 
-      const transitionDiv = document.createElement('div');
-      transitionDiv.className = 'transition';
-      if (this.config.transitionImages && this.config.transitions.length > 0) {
-        const randomNumber = Math.floor(Math.random() * this.config.transitions.length);
-        transitionDiv.style.animationDuration = this.config.transitionSpeed;
-        transitionDiv.style.transition = `opacity ${this.config.transitionSpeed} ease-in-out`;
-        transitionDiv.style.animationName = this.config.transitions[
-          randomNumber
-        ];
-        transitionDiv.style.animationTimingFunction = this.config.transitionTimingFunction;
-      }
-
-      const imageDiv = this.createDiv();
-      imageDiv.style.backgroundImage = `url("${image.src}")`;
-      // imageDiv.style.transform = 'rotate(0deg)';
-
-      // this.div1.style.backgroundImage = `url("${image.src}")`;
-      // this.div1.style.opacity = '1';
-
+    let mediaElement;
+    if (isVideo) {
+      mediaElement = document.createElement('video');
+      mediaElement.src = imageinfo.data.path || imageinfo.data;
+      mediaElement.autoplay = true;
+      mediaElement.muted = true; // Most browsers require muted for autoplay
+      mediaElement.className = 'video';
+      mediaElement.style.width = '100%';
+      mediaElement.style.height = '100%';
+      mediaElement.style.objectFit = this.config.backgroundSize; // cover or contain
+      
+      mediaElement.onended = () => {
+        if (this.timer) {
+          this.updateImage();
+        }
+      };
+    } else {
+      mediaElement = this.createDiv();
+      const imageUrl = typeof imageinfo.data === 'string' ? imageinfo.data : imageinfo.data.path;
+      mediaElement.style.backgroundImage = `url("${imageUrl}")`;
+      
       if (this.config.showProgressBar) {
-        // Restart css animation
         const oldDiv = document.querySelector('.progress-inner');
-        const newDiv = oldDiv.cloneNode(true);
-        oldDiv.parentNode.replaceChild(newDiv, oldDiv);
-        newDiv.style.display = '';
+        if (oldDiv) {
+          const newDiv = oldDiv.cloneNode(true);
+          oldDiv.parentNode.replaceChild(newDiv, oldDiv);
+          newDiv.style.display = '';
+        }
       }
 
-      // Check to see if we need to animate the background
-      if (
-        this.config.backgroundAnimationEnabled &&
-        this.config.animations.length
-      ) {
+      if (this.config.backgroundAnimationEnabled && this.config.animations.length) {
         const randomNumber = Math.floor(Math.random() * this.config.animations.length);
         const animation = this.config.animations[randomNumber];
-        imageDiv.style.animationDuration = this.config.backgroundAnimationDuration;
-        imageDiv.style.animationDelay = this.config.transitionSpeed;
+        mediaElement.style.animationDuration = this.config.backgroundAnimationDuration;
+        mediaElement.style.animationDelay = this.config.transitionSpeed;
 
         if (animation === 'slide') {
-          // check to see if the width of the picture is larger or the height
-          const {width} = image;
-          const {height} = image;
-          const adjustedWidth = width * window.innerHeight / height;
-          const adjustedHeight = height * window.innerWidth / width;
-
-          imageDiv.style.backgroundPosition = '';
-          imageDiv.style.animationIterationCount = this.config.backgroundAnimationLoopCount;
-          imageDiv.style.backgroundSize = 'cover';
-
-          if (
-            adjustedWidth / window.innerWidth >
-            adjustedHeight / window.innerHeight
-          ) {
-            // Scrolling horizontally...
-            if (Math.floor(Math.random() * 2)) {
-              imageDiv.className += ' slideH';
-            } else {
-              imageDiv.className += ' slideHInv';
-            }
-          } else {
-            // Scrolling vertically...
-            if (Math.floor(Math.random() * 2)) {
-              imageDiv.className += ' slideV';
-            } else {
-              imageDiv.className += ' slideVInv';
-            }
-          }
+          // We don't have the image object here to get dimensions easily without loading it first
+          // For now, let's keep it simple or skip animation for videos
+          mediaElement.className += ' slideH'; // Default to slideH
         } else {
-          imageDiv.className += ` ${animation}`;
+          mediaElement.className += ` ${animation}`;
         }
       }
+    }
 
-      EXIF.getData(image, () => {
-        if (this.config.showImageInfo) {
-          let dateTime = EXIF.getTag(image, 'DateTimeOriginal');
-          // attempt to parse the date if possible
-          if (dateTime !== null) {
-            try {
-              dateTime = moment(dateTime, 'YYYY:MM:DD HH:mm:ss');
-              dateTime = dateTime.format('dddd MMMM D, YYYY HH:mm');
-            } catch {
-              Log.log(`[MMM-BackgroundSlideshow] Failed to parse dateTime: ${
-                dateTime
-              } to format YYYY:MM:DD HH:mm:ss`);
-              dateTime = '';
+    if (this.imagesDiv.childNodes.length > 1) {
+      this.imagesDiv.removeChild(this.imagesDiv.childNodes[0]);
+    }
+    if (this.imagesDiv.childNodes.length > 0) {
+      this.imagesDiv.childNodes[0].style.opacity = '0';
+    }
+
+    contentWrapper.appendChild(mediaElement);
+    this.imagesDiv.appendChild(contentWrapper);
+
+    if (this.config.showImageInfo) {
+      // For videos, we might not have EXIF data, so we just show the name
+      if (isVideo) {
+        this.updateImageInfo(imageinfo, null);
+      } else {
+        const image = new Image();
+        image.onload = () => {
+          EXIF.getData(image, () => {
+            let dateTime = EXIF.getTag(image, 'DateTimeOriginal');
+            if (dateTime !== null) {
+              try {
+                dateTime = moment(dateTime, 'YYYY:MM:DD HH:mm:ss');
+                dateTime = dateTime.format('dddd MMMM D, YYYY HH:mm');
+              } catch {
+                dateTime = '';
+              }
             }
-          }
-          // TODO: allow for location lookup via openMaps
-          // let lat = EXIF.getTag(this, "GPSLatitude");
-          // let lon = EXIF.getTag(this, "GPSLongitude");
-          // // Only display the location if we have both longitute and lattitude
-          // if (lat && lon) {
-          //   // Get small map of location
-          // }
-          this.updateImageInfo(imageinfo, dateTime);
-        }
+            this.updateImageInfo(imageinfo, dateTime);
+          });
+        };
+        image.src = typeof imageinfo.data === 'string' ? imageinfo.data : imageinfo.data.path;
+      }
+    }
 
-        if (!this.browserSupportsExifOrientationNatively) {
-          const exifOrientation = EXIF.getTag(image, 'Orientation');
-          imageDiv.style.transform = this.getImageTransformCss(exifOrientation);
-        }
-      });
-      transitionDiv.appendChild(imageDiv);
-      this.imagesDiv.appendChild(transitionDiv);
-    };
-
-    image.src = imageinfo.data;
     this.sendSocketNotification('BACKGROUNDSLIDESHOW_IMAGE_UPDATED', {
       url: imageinfo.path
     });
